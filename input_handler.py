@@ -41,5 +41,4 @@ class InputHandler:
             except KeyboardInterrupt:
                 continue
 
-input_handler = InputHandler(0, 1, 0, 1)
 
