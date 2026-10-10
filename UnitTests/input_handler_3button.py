@@ -1,5 +1,4 @@
-import threading
-from gpiozero import Button, MCP3008
+from gpiozero import Button
 
 class InputHandler3Buttons:
     def __init__(self, left_pin=22, right_pin=17, select_pin=27): # joystick_threshold from 0-1
