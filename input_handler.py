@@ -1,5 +1,4 @@
 import threading
-
 from gpiozero import Button, MCP3008
 
 class InputHandler:
