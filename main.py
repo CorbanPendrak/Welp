@@ -1,72 +1,89 @@
-import sys
+from __future__ import annotations
 
-from luma.core.interface.serial import i2c, spi, pcf8574
-from luma.core.interface.parallel import bitbang_6800
-from luma.core.render import canvas
-from luma.oled.device import ssd1306, ssd1309, ssd1325, ssd1331, sh1106, sh1107, ws0010
-
-from PIL import ImageFont, ImageDraw, Image
-
+import time
 from pathlib import Path
 
-from luma.core.sprite_system import spritesheet, framerate_regulator
+from PIL import Image
 
-SPRITESHEET_NAME = 'character.png'
+from welp_app import ViewModel, WelpApp
 
+SPRITESHEET_NAME = 'runner.png'
 RESOLUTION = (128, 64)
 
-serial = i2c(port=1, address=0x3C)
 
-device = sh1106(serial)
+class OLEDRenderer:
+    def __init__(self):
+        from luma.core.interface.serial import i2c
+        from luma.core.render import canvas
+        from luma.oled.device import sh1106
 
-data = {
-    'image': str(Path(__file__).resolve().parent.joinpath('images', SPRITESHEET_NAME)),
-    'frames': {
-        'width': 64,
-        'height': 64,
-        'regX': 0,
-        'regY': 0
-    },
-    'animations': {
-        'run-right': {
-            'frames': range(19, 9, -1),
-            'next': "run-right",
-        },
-        'run-left': {
-            'frames': range(0, 10),
-            'next': "run-left"
-        }
-    }
-    }
+        self._canvas = canvas
+        self._device = sh1106(i2c(port=1, address=0x3C))
+        sheet_path = Path(__file__).resolve().parent.joinpath('assets', SPRITESHEET_NAME)
+        self._sheet_image = Image.open(sheet_path).convert('1')
+        self._frame_width = 64
+        self._frame_height = 69
+        self._frame_count = self._sheet_image.width // self._frame_width
+        self._frame_index = 0
 
-regulator = framerate_regulator()
-sheet = spritesheet(**data)
+    def render(self, view: ViewModel):
+        with self._canvas(self._device) as draw:
+            draw.line((63, 0, 63, RESOLUTION[1]), fill='white')
+            draw.bitmap((0, 0), self._current_frame(), fill='white')
+            draw.text((68, 0), view.title, fill='white')
+
+            y = 12
+            for line in view.lines:
+                draw.text((68, y), line, fill='white')
+                y += 10
+
+            if view.progress:
+                for label, level in view.progress:
+                    self._draw_bar(draw, 68, y, label, level)
+                    y += 16
+
+            self._frame_index = (self._frame_index + 1) % self._frame_count
+
+    def _draw_bar(self, draw, x: int, y: int, label: str, filled: int):
+        draw.text((x, y), f'{label}:', fill='white')
+        bar_y = y + 8
+        for index in range(5):
+            left = x + index * 10
+            right = left + 7
+            bottom = bar_y + 6
+            if index < filled:
+                draw.rectangle((left, bar_y, right, bottom), outline='white', fill='white')
+            else:
+                draw.rectangle((left, bar_y, right, bottom), outline='white')
+
+    def _current_frame(self):
+        frame_number = self._frame_index % self._frame_count
+        column = frame_number % 10
+        row = frame_number // 10
+        left = column * self._frame_width
+        top = row * self._frame_height
+        right = left + self._frame_width
+        bottom = top + self._frame_height
+        return self._sheet_image.crop((left, top, right, bottom))
 
 
-class Display:
-    def __init__(self, animation, title, panel):
-        self.animation = animation
-        self.title = title
-        self.panel = panel
-        self.regulator = framerate_regulator()
-        self.sheet = spritesheet(**data)
-        self.runner = self.sheet.animate(self.animation, loop=False)
+def main():
+    app = WelpApp()
+    renderer = OLEDRenderer()
 
-    def set_panel(self, panel):
-        self.panel = panel
+    from UnitTests.input_handler_3button import InputHandler3Buttons
 
-    def set_animation(self, animation, duration=sys.maxsize):
-        self.animation = animation
-        self.runner = self.sheet.animate(self.animation, loop=False)
-        while duration > 0:
-            with self.regulator:
-                self.render()
-            duration -= 1
+    input_handler = InputHandler3Buttons(on_button=app.handle_button)
 
-    def render(self):
-        with canvas(device) as draw:
-            draw.text((RESOLUTION[0] // 2 + 3, 0), self.title, fill="white")
-            frame = next(self.runner)
-            draw.bitmap((0, 0), frame, fill="white")
-            draw.bitmap((RESOLUTION[0]//2 + 3, RESOLUTION[1]//2), frame, fill="white")
+    try:
+        while True:
+            _ = input_handler
+            view = app.build_view()
+            renderer.render(view)
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        return
 
+
+if __name__ == '__main__':
+    main()
