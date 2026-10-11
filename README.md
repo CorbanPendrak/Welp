@@ -11,6 +11,9 @@ setuptools84.0.0
 ```shell
 # S
 rsync -a --delete ./ blueberry@blueberry.local:~/Welp/
+ssh blueberry@blueberry.local "luma-env/bin/python Welp/main.py"
+
+
 > Pushups
 	Squats
 	Back
