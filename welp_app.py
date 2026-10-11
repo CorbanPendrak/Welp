@@ -21,6 +21,9 @@ GOAL_MIN = 1
 HISTORY_DAYS = 60
 HEATMAP_DAYS = 7
 
+CHORD_BUTTONS = frozenset({"left", "right", "select"})
+CHORD_WINDOW = 0.8      # seconds to hit all three
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
@@ -100,6 +103,8 @@ class WelpApp:
         self._last_save = 0.0
         self._save_interval = 3.0
         self.state = self._load() or WelpState()
+        self._chord_presses = []        # list of (button, timestamp)
+        self._screenshot_pending = False
         with self._lock:
             self._tick()
 
@@ -139,6 +144,15 @@ class WelpApp:
     def handle_button(self, button: str):
         button = button.strip().lower()
         with self._lock:
+            now = time.time()
+            self._chord_presses = [(b, t) for (b, t) in self._chord_presses
+                                   if now - t <= CHORD_WINDOW]
+            self._chord_presses.append((button, now))
+            if {b for b, _ in self._chord_presses} >= CHORD_BUTTONS:
+                self._chord_presses.clear()
+                self._screenshot_pending = True
+                return                  # consume the press that completes the combo
+
             if self.state.screen == "overview":
                 self._handle_overview_button(button)
             elif self.state.screen == "pet_detail":
@@ -160,6 +174,13 @@ class WelpApp:
             elif self.state.screen == "settings_detail":
                 self._handle_settings_detail_button(button)
             self._dirty = True
+
+    def take_screenshot_request(self) -> bool:
+        with self._lock:
+            if self._screenshot_pending:
+                self._screenshot_pending = False
+                return True
+            return False
 
     def build_view(self) -> ViewModel:
         with self._lock:

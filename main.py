@@ -8,7 +8,7 @@ from pathlib import Path
 from luma.core.interface.serial import i2c
 from luma.core.render import canvas
 from luma.oled.device import sh1106
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from welp_app import METER_MAX, ViewModel, WelpApp
 
@@ -157,8 +157,7 @@ class SpriteAgent:
 
 
 class OLEDRenderer:
-    def __init__(self):
-        self._canvas = canvas
+    def __init__(self, shots_dir=None):
         self._device = sh1106(i2c(port=1, address=0x3C))
         sheet_path = (
             Path(__file__).resolve().parent.joinpath("assets", SPRITESHEET_NAME)
@@ -170,13 +169,32 @@ class OLEDRenderer:
         self._text_top = 0
         self._device.contrast(200)  # 0-255
         self._icons = {name: load_icon(name) for name in ICON_NAMES}
+        self._last_image = None
+        self._shots_dir = Path(shots_dir) if shots_dir else (
+            Path(__file__).resolve().parent / "screenshots")
+        self._shots_dir.mkdir(parents=True, exist_ok=True)
 
     def render(self, view: ViewModel):
-        with self._canvas(self._device) as draw:
-            if view.heatmap is not None:
-                self._render_heatmap(draw, view)
-            else:
-                self._render_pet(draw, view)
+        image = Image.new(self._device.mode, self._device.size)
+        draw = ImageDraw.Draw(image)
+        if view.heatmap is not None:
+            self._render_heatmap(draw, view)
+        else:
+            self._render_pet(draw, view)
+        self._device.display(image)
+        self._last_image = image
+
+    def save_screenshot(self, scale=4):
+        if self._last_image is None:
+            return None
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        path = self._shots_dir / f"welp-{ts}.png"
+        img = self._last_image
+        if scale > 1:                                   # upscale for demos (nearest = crisp pixels)
+            img = img.resize((img.width * scale, img.height * scale), Image.NEAREST)
+        img.save(path)
+        print(f"[screenshot] {path}")
+        return path
 
     def _render_pet(self, draw, view: ViewModel):
         # white left panel + black gutter (x=63..65) separating it from content
@@ -360,10 +378,14 @@ def main():
         default=str(Path(__file__).resolve().parent / "welp_state.json"),
         help="Path to the save file (handy for demos/tests)",
     )
+    parser.add_argument(
+        "--shots", dest="shots_dir", default=None,
+        help="Directory to save demo screenshots (default: ./screenshots)",
+    )
     args = parser.parse_args()
 
     app = WelpApp(save_path=args.save_path)
-    renderer = OLEDRenderer()
+    renderer = OLEDRenderer(shots_dir=args.shots_dir)
 
     from UnitTests.input_handler_3button import InputHandler3Buttons
 
@@ -374,6 +396,8 @@ def main():
             _ = input_handler
             view = app.build_view()
             renderer.render(view)
+            if app.take_screenshot_request():
+                renderer.save_screenshot()
             app.maybe_save()
             time.sleep(0.1)
     except KeyboardInterrupt:
