@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from threading import RLock
 
 TAB_LABELS = ("P", "E", "N", "I", "S")
@@ -38,6 +38,8 @@ class ViewModel:
     heatmap: tuple[tuple[str, tuple[int, ...]], ...] | None = None
     icons: tuple[str | None, ...] = ()
     sublines: tuple[str | None, ...] = ()
+    pet_anim: str | None = None
+    sleepy: float = 0.0
 
 
 @dataclass
@@ -185,54 +187,70 @@ class WelpApp:
     def build_view(self) -> ViewModel:
         with self._lock:
             self._tick()
-            tab = TAB_LABELS[self.state.tab_index]
+            vm = self._build_screen()
+            return replace(vm, pet_anim=self._pet_anim(), sleepy=self._sleepy_level())
 
-            if self.state.screen == "overview":
-                return self._build_overview_view(tab)
 
-            if self.state.screen == "pet_detail":
-                return self._build_pet_view()
+    def _build_screen(self) -> ViewModel:
+        tab = TAB_LABELS[self.state.tab_index]
 
-            if self.state.screen == "exercise_menu":
-                return ViewModel(
-                    title="Workout",
-                    lines=WORKOUT_OPTIONS,
-                    selected=self.state.workout_index,
-                )
+        if self.state.screen == "overview":
+            return self._build_overview_view(tab)
 
-            if self.state.screen == "workout_detail":
-                active_name = WORKOUT_OPTIONS[self.state.workout_index]
-                count = self.state.workout_counts[active_name]
-                return ViewModel(
-                    title=active_name,
-                    lines=(f"< {count} >",),
-                )
+        if self.state.screen == "pet_detail":
+            return self._build_pet_view()
 
-            if self.state.screen == "nutrition_menu":
-                return ViewModel(
-                    title="Nutrition",
-                    lines=NUTRITION_OPTIONS,
-                    selected=self.state.nutrition_index,
-                )
+        if self.state.screen == "exercise_menu":
+            return ViewModel(
+                title="Workout",
+                lines=WORKOUT_OPTIONS,
+                selected=self.state.workout_index,
+            )
 
-            if self.state.screen == "nutrition_detail":
-                active_name = NUTRITION_OPTIONS[self.state.nutrition_index]
-                count = self.state.nutrition_counts[active_name]
-                return ViewModel(
-                    title=active_name,
-                    lines=(f"< {count} >",),
-                )
+        if self.state.screen == "workout_detail":
+            active_name = WORKOUT_OPTIONS[self.state.workout_index]
+            count = self.state.workout_counts[active_name]
+            return ViewModel(
+                title=active_name,
+                lines=(f"< {count} >",),
+            )
 
-            if self.state.screen == "info":
-                return self._build_info_view()
+        if self.state.screen == "nutrition_menu":
+            return ViewModel(
+                title="Nutrition",
+                lines=NUTRITION_OPTIONS,
+                selected=self.state.nutrition_index,
+            )
 
-            if self.state.screen == "settings_menu":
-                return self._build_settings_view()
+        if self.state.screen == "nutrition_detail":
+            active_name = NUTRITION_OPTIONS[self.state.nutrition_index]
+            count = self.state.nutrition_counts[active_name]
+            return ViewModel(
+                title=active_name,
+                lines=(f"< {count} >",),
+            )
 
-            if self.state.screen == "settings_detail":
-                return self._build_goal_detail_view()
+        if self.state.screen == "info":
+            return self._build_info_view()
 
-            raise ValueError(f"Unknown screen: {self.state.screen}")
+        if self.state.screen == "settings_menu":
+            return self._build_settings_view()
+
+        if self.state.screen == "settings_detail":
+            return self._build_goal_detail_view()
+
+        raise ValueError(f"Unknown screen: {self.state.screen}")
+
+    def _pet_anim(self) -> str | None:
+        if self.state.screen == "workout_detail":
+            return "stomp"
+        if self.state.screen == "nutrition_detail":
+            return "eat"
+        return None
+
+    def _sleepy_level(self) -> float:
+        # 0 when happiness >= 50, ramps to 1.0 as it bottoms out
+        return _clamp((50 - self.state.happiness) / 50, 0.0, 1.0)
 
     def _handle_overview_button(self, button: str):
         if button == "left":

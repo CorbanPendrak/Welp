@@ -23,17 +23,24 @@ BAR_MAX = METER_MAX
 # Set FRAME_SIZE and the per-row frame counts to match the actual sheet.
 FRAME_SIZE = (32, 32)
 ANIMATIONS = {
-    "fwd_right": {"row": 0, "frames": 4},  # forward, looking right
-    "fwd_left": {"row": 1, "frames": 4},  # forward, looking left
-    "back": {"row": 2, "frames": 4},  # moving back (away)
-    "left": {"row": 3, "frames": 4},  # moving left
-    "right": {"row": 4, "frames": 4},  # moving right
-    "idle_smile": {"row": 5, "frames": 4},  # idle smile
-    "idle_blink": {"row": 6, "frames": 4},  # idle blink
+    "fwd_right": {"row": 0, "frames": 3},  # forward, looking right
+    "fwd_left": {"row": 1, "frames": 3},  # forward, looking left
+    "back": {"row": 2, "frames": 3},  # moving back (away)
+    "left": {"row": 3, "frames": 3},  # moving left
+    "right": {"row": 4, "frames": 3},  # moving right
+    "idle_smile": {"row": 5, "frames": 3},  # idle smile
+    "idle_blink": {"row": 6, "frames": 3},  # idle blink
 }
 ICON_NAMES = ("energy", "food", "heart", "water", "weight")
 BLINK_CHANCE = 0.08  # per idle frame
 BLINK_FRAME_TICKS = 1  # blink plays fast
+CLIPS = {
+    "eat":   [("fwd_left", 0), ("idle_smile", 0)],   # lean in, then chew/smile
+    "stomp": [("fwd_left", 0), ("fwd_left", 1), ("fwd_left", 2)],     # alternate feet
+}
+CLIP_FRAME_TICKS = 3        # ticks per clip pose
+SLEEPY_BLINK_BONUS = 0.5    # extra blink chance when stats are rock-bottom
+SLEEPY_REST = 0.8           # chance to doze again instead of wandering
 
 
 def load_icon(name):
@@ -80,14 +87,40 @@ class SpriteAgent:
         self._cache = {}
         self._last_good = None
         self._blinking = False
+        self._clip = None
+        self._clip_i = 0
+        self._sleepy = 0.0
+
+    def set_action(self, action, sleepy=0.0):
+        """Drive the agent from the UI: 'eat', 'stomp', or None to free-roam."""
+        self._sleepy = max(0.0, min(1.0, sleepy))
+        if action in CLIPS:
+            if self._clip != action:
+                self._clip, self._clip_i = action, 0
+        elif self._clip is not None:            # leaving a scripted clip -> resume roaming
+            self._clip = None
+            self._blinking = False
+            self._set_anim("idle_smile")
+            self._moving = False
+            self._dwell = self._rng.randint(15, 45)
 
     def update(self):
-        if self._moving:
+        if self._clip is not None:
+            self._step_clip()
+        elif self._moving:
             self._move()
         else:
             self._idle()
         self._tick += 1
-        self._advance_frame()
+        if self._clip is None:
+            self._advance_frame()
+
+    def _step_clip(self):
+        seq = CLIPS[self._clip]
+        if self._tick % CLIP_FRAME_TICKS == 0:
+            self._clip_i = (self._clip_i + 1) % len(seq)
+        self._anim, self._frame = seq[self._clip_i]   # frame_image reads these directly
+
 
     def _advance_frame(self):
         nframes = max(1, self._anims[self._anim]["frames"])
@@ -119,13 +152,17 @@ class SpriteAgent:
 
     def _idle(self):
         self._dwell -= 1
-        if not self._blinking and self._rng.random() < BLINK_CHANCE:
+        blink_chance = BLINK_CHANCE + self._sleepy * SLEEPY_BLINK_BONUS
+        if not self._blinking and self._rng.random() < blink_chance:
             self._blinking = True
-            self._set_anim("idle_blink")  # resets _frame to 0
+            self._set_anim("idle_blink")
         if self._dwell <= 0 and not self._blinking:
-            self._tx = self._rng.uniform(0, self._max_x)
-            self._ty = self._rng.uniform(0, self._max_y)
-            self._moving = True
+            if self._rng.random() < self._sleepy * SLEEPY_REST:
+                self._dwell = self._rng.randint(20, 60)      # doze longer instead of moving
+            else:
+                self._tx = self._rng.uniform(0, self._max_x)
+                self._ty = self._rng.uniform(0, self._max_y)
+                self._moving = True
 
     def _direction_anim(self, dx, dy):
         if abs(dx) >= abs(dy):
@@ -199,6 +236,7 @@ class OLEDRenderer:
     def _render_pet(self, draw, view: ViewModel):
         # white left panel + black gutter (x=63..65) separating it from content
         draw.rectangle((0, 0, 62, RESOLUTION[1] - 1), fill="white")
+        self._agent.set_action(view.pet_anim, view.sleepy)
         self._agent.update()
         draw.bitmap(self._agent.position(), self._agent.frame_image(), fill="black")
         draw.text((68, 0), view.title, fill="white", font_size=12)
